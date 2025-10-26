@@ -1,48 +1,60 @@
 // functions/convertHtmlToPdf.js
-const puppeteer = require('puppeteer');
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const puppeteer = require('puppeteer');
 require('dotenv').config();
+
+const makeTmpUserDataDir = () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'puppeteer-'));
+    return base;
+};
 
 // פונקציה להמרת HTML ל-PDF
 const convertHtmlToPdf = async (html) => {
-    let userDataDir;
-    
+    const userDataDir = makeTmpUserDataDir();
+
+    const commonArgs = [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',          // לעתים עוזר בשרתים דלי משאבים
+        '--disable-gpu',             // אין צורך ב-GPU בשרת
+        `--user-data-dir=${userDataDir}`, // הכי חשוב – פרופיל ייחודי
+    ];
+
     const puppeteerObj = process.env.ENVIRONMENT === 'dev' ?
         {
-            headless: true, // מתאים לסביבת שרת
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
+            headless: true,
+            args: commonArgs,
         } :
         {
-            headless: true, // מתאים לסביבת שרת
-            executablePath: '/usr/bin/chromium-browser', // נתיב לדפדפן Chromium המותקן
-            args: [
-                '--no-sandbox', 
-                '--disable-setuid-sandbox',
-                '--user-data-dir=' + (userDataDir = `/tmp/chrome-user-data-${Date.now()}-${Math.random().toString(36).substring(7)}`)
-            ],
+            headless: true,
+            executablePath: '/usr/bin/chromium-browser',
+            args: commonArgs,
         };
 
-    const browser = await puppeteer.launch(puppeteerObj);
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 60000 });
+    let browser;
+    try {
+        browser = await puppeteer.launch(puppeteerObj);
+        const page = await browser.newPage();
+        await page.setContent(html, { waitUntil: 'networkidle0', timeout: 60000 });
 
-    const pdfBuffer = await page.pdf({
-        format: 'A4',
-        printBackground: true,
-    });
+        const pdfBuffer = await page.pdf({
+            format: 'A4',
+            printBackground: true,
+        });
 
-    await browser.close();
-    
-    // ניקוי התיקייה הזמנית
-    if (userDataDir && fs.existsSync(userDataDir)) {
-        try {
-            fs.rmSync(userDataDir, { recursive: true, force: true });
-        } catch (err) {
-            // התעלמות משגיאות ניקוי
-        }
+        return pdfBuffer;
+    } finally {
+        if (browser) await browser.close();
+        // ניקוי הפרופיל הזמני
+        try { 
+            fs.rmSync(userDataDir, { recursive: true, force: true }); 
+        } catch (_) {}
     }
-    
-    return pdfBuffer;
 };
 
 module.exports = { convertHtmlToPdf };
